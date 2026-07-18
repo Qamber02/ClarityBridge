@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     allowed_origins: str = "http://localhost:5173,http://localhost:5174"
     supabase_url: AnyHttpUrl | None = None
     supabase_service_role_key: str | None = None
+    zoom_webhook_secret_token: str | None = None
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

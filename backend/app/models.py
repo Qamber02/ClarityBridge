@@ -33,6 +33,18 @@ class AnalyzeSessionRequest(BaseModel):
     user_id: str | None = Field(default=None, max_length=128)
 
 
+class TranscriptIngestRequest(BaseModel):
+    meeting_id: str = Field(min_length=1, max_length=256)
+    segment: TranscriptSegment
+    rtms_session_id: str | None = Field(default=None, max_length=256)
+
+
+class AnalyzeBufferedSessionRequest(BaseModel):
+    meeting_id: str = Field(min_length=1, max_length=256)
+    mode: CoachingMode = CoachingMode.general
+    filler_word_count: int | None = Field(default=None, ge=0)
+
+
 class WpmPoint(BaseModel):
     time: float
     wpm: float

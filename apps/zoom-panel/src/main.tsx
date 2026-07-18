@@ -1,6 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { Mic, PauseCircle, Send, SquarePlus } from "lucide-react";
+import { Radio, Mic, PauseCircle, Send, SquarePlus } from "lucide-react";
+import { configureZoomApp, getRtmsSessions, onMeetingEnded, onRtmsStatusChange, startRtms, stopRtms, type RtmsSession, type ZoomRuntime } from "./zoomSdk";
 import "./styles.css";
 
 type Mode = "general" | "interview" | "sales";
@@ -74,7 +75,13 @@ function App() {
   const [isListening, setIsListening] = React.useState(false);
   const [report, setReport] = React.useState<AnalysisResponse | null>(null);
   const [error, setError] = React.useState<string | null>(null);
+  const [zoomRuntime, setZoomRuntime] = React.useState<ZoomRuntime | null>(null);
+  const [rtmsSessions, setRtmsSessions] = React.useState<RtmsSession[]>([]);
+  const [rtmsBusy, setRtmsBusy] = React.useState(false);
   const recognitionRef = React.useRef<SpeechRecognition | null>(null);
+  const segmentsRef = React.useRef<TranscriptSegment[]>([]);
+  const fillerCountRef = React.useRef(0);
+  const modeRef = React.useRef<Mode>("general");
 
   const elapsedSeconds = React.useMemo(() => {
     if (segments.length === 0) return 0;
@@ -84,6 +91,49 @@ function App() {
   const liveWpm = elapsedSeconds > 0 ? Math.round((totalWords / elapsedSeconds) * 60) : 0;
   const fillerCount = React.useMemo(() => segments.reduce((total, segment) => total + (segment.text.match(fillerPattern)?.length ?? 0), 0), [segments]);
   const paceState = liveWpm <= 160 ? "steady" : liveWpm <= 200 ? "fast" : "rushed";
+  const rtmsSupported = zoomRuntime?.supportedApis.includes("startRTMS") && zoomRuntime.supportedApis.includes("getRTMSStatus");
+  const latestRtmsStatus = rtmsSessions[rtmsSessions.length - 1]?.status ?? "stopped";
+
+  React.useEffect(() => {
+    segmentsRef.current = segments;
+  }, [segments]);
+
+  React.useEffect(() => {
+    fillerCountRef.current = fillerCount;
+  }, [fillerCount]);
+
+  React.useEffect(() => {
+    modeRef.current = mode;
+  }, [mode]);
+
+  React.useEffect(() => {
+    let mounted = true;
+
+    async function bootZoom() {
+      const runtime = await configureZoomApp();
+      if (!mounted) return;
+      setZoomRuntime(runtime);
+
+      if (runtime.configured) {
+        onRtmsStatusChange((event) => setRtmsSessions((current) => [...current, event]));
+        onMeetingEnded(() => {
+          if (segmentsRef.current.length > 0) {
+            void submitAnalysis(segmentsRef.current, fillerCountRef.current, modeRef.current);
+          }
+        });
+        if (runtime.supportedApis.includes("getRTMSStatus")) {
+          const sessions = await getRtmsSessions().catch(() => []);
+          if (mounted) setRtmsSessions(sessions);
+        }
+      }
+    }
+
+    void bootZoom();
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   function appendSegment(text: string) {
     const cleanText = text.trim();
@@ -138,7 +188,7 @@ function App() {
     setIsListening(true);
   }
 
-  async function analyze() {
+  async function submitAnalysis(transcriptSegments: TranscriptSegment[], submittedFillerCount: number, selectedMode: Mode) {
     setError(null);
     setReport(null);
     try {
@@ -146,15 +196,37 @@ function App() {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          transcript_segments: segments,
-          filler_word_count: fillerCount,
-          mode,
+          transcript_segments: transcriptSegments,
+          filler_word_count: submittedFillerCount,
+          mode: selectedMode,
         }),
       });
       if (!response.ok) throw new Error(await response.text());
       setReport(await response.json());
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Analysis failed");
+    }
+  }
+
+  async function analyze() {
+    await submitAnalysis(segments, fillerCount, mode);
+  }
+
+  async function toggleRtms() {
+    setError(null);
+    setRtmsBusy(true);
+    try {
+      if (latestRtmsStatus === "started" || latestRtmsStatus === "resumed" || latestRtmsStatus === "connecting") {
+        await stopRtms();
+      } else {
+        await startRtms();
+      }
+      const sessions = await getRtmsSessions().catch(() => []);
+      setRtmsSessions(sessions);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "RTMS action failed. Check Zoom RTMS scopes and account settings.");
+    } finally {
+      setRtmsBusy(false);
     }
   }
 
@@ -189,6 +261,10 @@ function App() {
       </section>
 
       <section className="controls">
+        <button onClick={toggleRtms} disabled={!rtmsSupported || rtmsBusy}>
+          <Radio size={18} />
+          {latestRtmsStatus === "started" || latestRtmsStatus === "resumed" || latestRtmsStatus === "connecting" ? "Stop RTMS" : "Start RTMS"}
+        </button>
         <button onClick={toggleListening} className="primary">
           {isListening ? <PauseCircle size={18} /> : <Mic size={18} />}
           {isListening ? "Stop" : "Listen"}
@@ -197,6 +273,11 @@ function App() {
           <Send size={18} />
           Analyze
         </button>
+      </section>
+
+      <section className="zoom-status">
+        <strong>{zoomRuntime?.configured ? "Zoom connected" : "Browser fallback"}</strong>
+        <span>{zoomRuntime?.configured ? `${zoomRuntime.runningContext} · RTMS ${latestRtmsStatus}` : zoomRuntime?.error ?? "Checking Zoom context..."}</span>
       </section>
 
       <section className="manual-entry">

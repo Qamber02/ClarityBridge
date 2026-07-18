@@ -160,18 +160,29 @@ textarea {
 }
 
 .transcript,
-.report {
+.report,
+.zoom-status {
   margin-top: 16px;
   display: grid;
   gap: 10px;
 }
 
 .transcript p,
-.report {
+.report,
+.zoom-status {
   margin: 0;
   border-radius: 8px;
   background: rgba(255, 253, 246, 0.74);
   padding: 12px;
+}
+
+.zoom-status strong {
+  font-size: 0.95rem;
+}
+
+.zoom-status span {
+  color: #516158;
+  font-size: 0.82rem;
 }
 
 .report strong {
